@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import '../widgets/rpe_dialog.dart';
 
 enum _Phase { prep, work, rest, done }
 
@@ -32,6 +33,7 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
   int _secondsLeft = 0;
   int _currentCircuit = 1;
   bool _isPaused = false;
+  final List<double> _rpeLog = [];
 
   @override
   void initState() {
@@ -54,9 +56,32 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
     if (_isPaused) return;
     if (_secondsLeft > 1) {
       setState(() => _secondsLeft--);
+    } else if (_phase == _Phase.work) {
+      _handleWorkComplete();
     } else {
       _advancePhase();
     }
+  }
+
+  Future<void> _handleWorkComplete() async {
+    setState(() => _isPaused = true);
+    final rpe = await showRpeDialog(
+      context,
+      circuitNumber: _currentCircuit,
+      totalCircuits: widget.numCircuits,
+    );
+    if (!mounted) return;
+    int restDuration = widget.restSeconds;
+    if (rpe != null) {
+      _rpeLog.add(rpe);
+    } else {
+      restDuration = (widget.restSeconds - 5).clamp(0, widget.restSeconds);
+    }
+    setState(() {
+      _isPaused = false;
+      _phase = _Phase.rest;
+      _secondsLeft = restDuration;
+    });
   }
 
   void _advancePhase() {
@@ -65,10 +90,6 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
         case _Phase.prep:
           _phase = _Phase.work;
           _secondsLeft = widget.workSeconds;
-          break;
-        case _Phase.work:
-          _phase = _Phase.rest;
-          _secondsLeft = widget.restSeconds;
           break;
         case _Phase.rest:
           if (_currentCircuit >= widget.numCircuits) {
@@ -80,6 +101,7 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
             _secondsLeft = widget.workSeconds;
           }
           break;
+        case _Phase.work:
         case _Phase.done:
           break;
       }
@@ -136,26 +158,31 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
               Text(
                 isDone ? '' : 'круг $_currentCircuit / ${widget.numCircuits}',
                 style: const TextStyle(
-                    color: _muted, fontSize: 26, fontWeight: FontWeight.w500),
+                  color: _muted,
+                  fontSize: 26,
+                  fontWeight: FontWeight.w500,
+                ),
               ),
               Column(
                 children: [
                   Text(
                     _phaseLabel,
                     style: TextStyle(
-                        color: _phaseColor,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: 4),
+                      color: _phaseColor,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 4,
+                    ),
                   ),
                   const SizedBox(height: 12),
                   Text(
                     isDone ? '' : _timeText,
                     style: TextStyle(
-                        color: _phaseColor,
-                        fontSize: 120,
-                        fontWeight: FontWeight.w700,
-                        height: 1),
+                      color: _phaseColor,
+                      fontSize: 120,
+                      fontWeight: FontWeight.w700,
+                      height: 1,
+                    ),
                   ),
                 ],
               ),
@@ -163,40 +190,46 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
                 width: double.infinity,
                 child: isDone
                     ? ElevatedButton(
-                  onPressed: () => Navigator.pop(context),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: _colorRest,
-                    padding: const EdgeInsets.symmetric(vertical: 22),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14)),
-                  ),
-                  child: const Text(
-                    'готово',
-                    style: TextStyle(
-                        color: Colors.black,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: 1),
-                  ),
-                )
+                        onPressed: () => Navigator.pop(context),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _colorRest,
+                          padding: const EdgeInsets.symmetric(vertical: 22),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                        child: const Text(
+                          'готово',
+                          style: TextStyle(
+                            color: Colors.black,
+                            fontSize: 20,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: 1,
+                          ),
+                        ),
+                      )
                     : OutlinedButton(
-                  onPressed: _togglePause,
-                  style: OutlinedButton.styleFrom(
-                    side: const BorderSide(
-                        color: Color(0xFF4A4A46), width: 1.5),
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14)),
-                  ),
-                  child: Text(
-                    _isPaused ? 'продолжить' : 'пауза',
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w500,
-                        letterSpacing: 1),
-                  ),
-                ),
+                        onPressed: _togglePause,
+                        style: OutlinedButton.styleFrom(
+                          side: const BorderSide(
+                            color: Color(0xFF4A4A46),
+                            width: 1.5,
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                        child: Text(
+                          _isPaused ? 'продолжить' : 'пауза',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w500,
+                            letterSpacing: 1,
+                          ),
+                        ),
+                      ),
               ),
             ],
           ),
