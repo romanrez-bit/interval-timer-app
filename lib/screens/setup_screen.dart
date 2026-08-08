@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/saved_timer.dart';
 import '../services/database_service.dart';
+import 'active_timer_screen.dart';
 
 class SetupScreen extends StatefulWidget {
   const SetupScreen({super.key});
@@ -46,14 +47,17 @@ class _SetupScreenState extends State<SetupScreen> {
   }
 
   void _startWorkout() {
-    final config = SavedTimer(
-      name: _nameController.text,
-      prepSeconds: int.tryParse(_prepController.text) ?? 10,
-      workSeconds: int.tryParse(_workController.text) ?? 40,
-      restSeconds: int.tryParse(_restController.text) ?? 20,
-      numCircuits: int.tryParse(_circuitsController.text) ?? 8,
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ActiveTimerScreen(
+          prepSeconds: int.tryParse(_prepController.text) ?? 10,
+          workSeconds: int.tryParse(_workController.text) ?? 40,
+          restSeconds: int.tryParse(_restController.text) ?? 20,
+          numCircuits: int.tryParse(_circuitsController.text) ?? 8,
+        ),
+      ),
     );
-    // TODO: переход на Экран 2 (Активный таймер)
   }
 
   void _loadTemplate(SavedTimer timer) {
