@@ -1,5 +1,8 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:audioplayers/audioplayers.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 import '../widgets/rpe_dialog.dart';
 
 enum _Phase { prep, work, rest, done }
@@ -26,6 +29,7 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
   static const _colorPrep = Color(0xFFD4A017);
   static const _colorWork = Color(0xFFE3620F);
   static const _colorRest = Color(0xFF4ADE80);
+  static const _colorExtraPause = Color(0xFF7A93A6);
   static const _muted = Color(0xFF8A8A86);
 
   Timer? _timer;
@@ -35,16 +39,25 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
   bool _isPaused = false;
   final List<double> _rpeLog = [];
 
+  bool _isExtraPause = false;
+  int _extraPauseSeconds = 0;
+  int _totalExtraPauseSeconds = 0;
+
+  final AudioPlayer _audioPlayer = AudioPlayer();
+
   @override
   void initState() {
     super.initState();
     _secondsLeft = widget.prepSeconds;
     _startTicking();
+    WakelockPlus.enable();
   }
 
   @override
   void dispose() {
     _timer?.cancel();
+    _audioPlayer.dispose();
+    WakelockPlus.disable();
     super.dispose();
   }
 
@@ -52,10 +65,31 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
     _timer = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
   }
 
+  Future<void> _playSound(String fileName) async {
+    try {
+      await _audioPlayer.stop();
+      await _audioPlayer.play(AssetSource('sounds/$fileName'));
+    } catch (_) {
+      // если файл ещё не добавлен — просто не будет звука, приложение не упадёт
+    }
+  }
+
+  void _signalTransition(String soundFile) {
+    _playSound(soundFile);
+    HapticFeedback.mediumImpact();
+  }
+
   void _tick() {
+    if (_isExtraPause) {
+      setState(() => _extraPauseSeconds++);
+      return;
+    }
     if (_isPaused) return;
     if (_secondsLeft > 1) {
       setState(() => _secondsLeft--);
+      if (_secondsLeft <= 5 && _secondsLeft >= 2) {
+        _playSound('tick.mp3');
+      }
     } else if (_phase == _Phase.work) {
       _handleWorkComplete();
     } else {
@@ -65,16 +99,27 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
 
   Future<void> _handleWorkComplete() async {
     setState(() => _isPaused = true);
+    await _audioPlayer.stop();
     final rpe = await showRpeDialog(
       context,
       circuitNumber: _currentCircuit,
       totalCircuits: widget.numCircuits,
     );
     if (!mounted) return;
-    int restDuration = widget.restSeconds;
     if (rpe != null) {
       _rpeLog.add(rpe);
-    } else {
+    }
+    if (_currentCircuit >= widget.numCircuits) {
+      _timer?.cancel();
+      setState(() {
+        _isPaused = false;
+        _phase = _Phase.done;
+      });
+      _signalTransition('workout_complete.mp3');
+      return;
+    }
+    int restDuration = widget.restSeconds;
+    if (rpe == null) {
       restDuration = (widget.restSeconds - 5).clamp(0, widget.restSeconds);
     }
     setState(() {
@@ -82,37 +127,88 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
       _phase = _Phase.rest;
       _secondsLeft = restDuration;
     });
+    _signalTransition('phase_start.mp3');
   }
 
   void _advancePhase() {
+    String? soundFile;
     setState(() {
       switch (_phase) {
         case _Phase.prep:
           _phase = _Phase.work;
           _secondsLeft = widget.workSeconds;
+          soundFile = 'phase_start.mp3';
           break;
         case _Phase.rest:
-          if (_currentCircuit >= widget.numCircuits) {
-            _phase = _Phase.done;
-            _timer?.cancel();
-          } else {
-            _currentCircuit++;
-            _phase = _Phase.work;
-            _secondsLeft = widget.workSeconds;
-          }
+          _currentCircuit++;
+          _phase = _Phase.work;
+          _secondsLeft = widget.workSeconds;
+          soundFile = 'circuit_complete.mp3';
           break;
         case _Phase.work:
         case _Phase.done:
           break;
       }
     });
+    if (soundFile != null) {
+      _signalTransition(soundFile!);
+    }
   }
 
   void _togglePause() {
-    setState(() => _isPaused = !_isPaused);
+    final pausing = !_isPaused;
+    setState(() => _isPaused = pausing);
+    if (pausing) {
+      _audioPlayer.stop();
+    }
+  }
+
+  void _toggleExtraPause() {
+    setState(() {
+      if (_isExtraPause) {
+        _totalExtraPauseSeconds += _extraPauseSeconds;
+        _extraPauseSeconds = 0;
+        _isExtraPause = false;
+      } else {
+        _isExtraPause = true;
+        _extraPauseSeconds = 0;
+      }
+    });
+  }
+
+  Future<void> _confirmStopWorkout() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF161616),
+        title: const Text('Закончить тренировку?',
+            style: TextStyle(color: Colors.white)),
+        content: const Text(
+          'Текущий прогресс не сохранится.',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Отмена'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child:
+            const Text('Закончить', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) {
+      _timer?.cancel();
+      _audioPlayer.stop();
+      Navigator.pop(context);
+    }
   }
 
   Color get _phaseColor {
+    if (_isExtraPause) return _colorExtraPause;
     switch (_phase) {
       case _Phase.prep:
         return _colorPrep;
@@ -126,6 +222,7 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
   }
 
   String get _phaseLabel {
+    if (_isExtraPause) return 'ДОП. ПАУЗА';
     switch (_phase) {
       case _Phase.prep:
         return 'ПОДГОТОВКА';
@@ -139,8 +236,9 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
   }
 
   String get _timeText {
-    final m = (_secondsLeft ~/ 60).toString().padLeft(2, '0');
-    final s = (_secondsLeft % 60).toString().padLeft(2, '0');
+    final seconds = _isExtraPause ? _extraPauseSeconds : _secondsLeft;
+    final m = (seconds ~/ 60).toString().padLeft(2, '0');
+    final s = (seconds % 60).toString().padLeft(2, '0');
     return '$m:$s';
   }
 
@@ -155,12 +253,31 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                isDone ? '' : 'круг $_currentCircuit / ${widget.numCircuits}',
-                style: const TextStyle(
-                  color: _muted,
-                  fontSize: 26,
-                  fontWeight: FontWeight.w500,
+              SizedBox(
+                width: double.infinity,
+                height: 40,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    Text(
+                      isDone
+                          ? ''
+                          : 'круг $_currentCircuit / ${widget.numCircuits}',
+                      style: const TextStyle(
+                          color: _muted,
+                          fontSize: 22,
+                          fontWeight: FontWeight.w500),
+                    ),
+                    if (!isDone)
+                      Positioned(
+                        right: 0,
+                        child: IconButton(
+                          onPressed: _confirmStopWorkout,
+                          icon: const Icon(Icons.stop_circle_outlined,
+                              color: Colors.redAccent, size: 26),
+                        ),
+                      ),
+                  ],
                 ),
               ),
               Column(
@@ -168,68 +285,100 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
                   Text(
                     _phaseLabel,
                     style: TextStyle(
-                      color: _phaseColor,
-                      fontSize: 20,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 4,
-                    ),
+                        color: _phaseColor,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 4),
                   ),
                   const SizedBox(height: 12),
                   Text(
                     isDone ? '' : _timeText,
                     style: TextStyle(
-                      color: _phaseColor,
-                      fontSize: 120,
-                      fontWeight: FontWeight.w700,
-                      height: 1,
-                    ),
+                        color: _phaseColor,
+                        fontSize: 120,
+                        fontWeight: FontWeight.w700,
+                        height: 1),
                   ),
                 ],
               ),
-              SizedBox(
-                width: double.infinity,
-                child: isDone
-                    ? ElevatedButton(
-                        onPressed: () => Navigator.pop(context),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: _colorRest,
-                          padding: const EdgeInsets.symmetric(vertical: 22),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                        ),
-                        child: const Text(
-                          'готово',
-                          style: TextStyle(
+              Column(
+                children: [
+                  SizedBox(
+                    width: double.infinity,
+                    child: isDone
+                        ? ElevatedButton(
+                      onPressed: () => Navigator.pop(context),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _colorRest,
+                        padding:
+                        const EdgeInsets.symmetric(vertical: 22),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14)),
+                      ),
+                      child: const Text(
+                        'готово',
+                        style: TextStyle(
                             color: Colors.black,
                             fontSize: 20,
                             fontWeight: FontWeight.w600,
-                            letterSpacing: 1,
-                          ),
-                        ),
-                      )
-                    : OutlinedButton(
-                        onPressed: _togglePause,
-                        style: OutlinedButton.styleFrom(
-                          side: const BorderSide(
-                            color: Color(0xFF4A4A46),
-                            width: 1.5,
-                          ),
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                        ),
-                        child: Text(
-                          _isPaused ? 'продолжить' : 'пауза',
-                          style: const TextStyle(
+                            letterSpacing: 1),
+                      ),
+                    )
+                        : _isExtraPause
+                        ? ElevatedButton(
+                      onPressed: _toggleExtraPause,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _colorExtraPause,
+                        padding: const EdgeInsets.symmetric(
+                            vertical: 16),
+                        shape: RoundedRectangleBorder(
+                            borderRadius:
+                            BorderRadius.circular(14)),
+                      ),
+                      child: const Text(
+                        'продолжить',
+                        style: TextStyle(
+                            color: Colors.black,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: 1),
+                      ),
+                    )
+                        : OutlinedButton(
+                      onPressed: _togglePause,
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(
+                            color: Color(0xFF4A4A46), width: 1.5),
+                        padding: const EdgeInsets.symmetric(
+                            vertical: 16),
+                        shape: RoundedRectangleBorder(
+                            borderRadius:
+                            BorderRadius.circular(14)),
+                      ),
+                      child: Text(
+                        _isPaused ? 'продолжить' : 'пауза',
+                        style: const TextStyle(
                             color: Colors.white,
                             fontSize: 16,
                             fontWeight: FontWeight.w500,
-                            letterSpacing: 1,
-                          ),
-                        ),
+                            letterSpacing: 1),
                       ),
+                    ),
+                  ),
+                  if (!isDone && !_isExtraPause) ...[
+                    const SizedBox(height: 14),
+                    TextButton.icon(
+                      onPressed: _toggleExtraPause,
+                      icon: const Icon(Icons.pause_circle_outline,
+                          color: _muted, size: 18),
+                      label: const Text('доп. пауза',
+                          style: TextStyle(
+                              color: _muted,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w500)),
+                    ),
+                  ],
+                ],
               ),
             ],
           ),

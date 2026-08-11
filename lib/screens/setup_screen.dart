@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../models/saved_timer.dart';
 import '../services/database_service.dart';
+import '../widgets/edit_template_dialog.dart';
 import 'active_timer_screen.dart';
 
 class SetupScreen extends StatefulWidget {
@@ -90,6 +92,14 @@ class _SetupScreenState extends State<SetupScreen> {
     );
     if (confirmed == true && timer.id != null) {
       await DatabaseService.instance.deleteSavedTimer(timer.id!);
+      _loadSavedTimers();
+    }
+  }
+
+  Future<void> _editTemplate(SavedTimer timer) async {
+    final updated = await showEditTemplateDialog(context, timer: timer);
+    if (updated != null) {
+      await DatabaseService.instance.updateSavedTimer(updated);
       _loadSavedTimers();
     }
   }
@@ -189,11 +199,12 @@ class _SetupScreenState extends State<SetupScreen> {
         children: [
           Text(label, style: const TextStyle(color: _muted, fontSize: 12)),
           const SizedBox(height: 4),
-          TextField(
-            controller: controller,
-            keyboardType: TextInputType.number,
-            style: TextStyle(
-                color: color, fontSize: 26, fontWeight: FontWeight.w500),
+      TextField(
+          controller: controller,
+          keyboardType: TextInputType.text,
+          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+          style: TextStyle(
+              color: color, fontSize: 26, fontWeight: FontWeight.w500),
             decoration: const InputDecoration(
                 border: InputBorder.none,
                 isDense: true,
@@ -248,8 +259,8 @@ class _SetupScreenState extends State<SetupScreen> {
       child: Row(
         children: [
           Expanded(
-            child: GestureDetector(
-              onTap: () => _loadTemplate(timer),
+              child: GestureDetector(
+                  onDoubleTap: () => _loadTemplate(timer),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -271,7 +282,7 @@ class _SetupScreenState extends State<SetupScreen> {
             icon: const Icon(Icons.edit, color: _muted, size: 18),
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-            onPressed: () {}, // TODO: экран/диалог редактирования шаблона
+            onPressed: () => _editTemplate(timer),
           ),
           const SizedBox(width: 8),
           IconButton(
