@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
+import '../services/notification_service.dart';
 import '../widgets/rpe_dialog.dart';
 
 enum _Phase { prep, work, rest, done }
@@ -51,6 +52,7 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
     _secondsLeft = widget.prepSeconds;
     _startTicking();
     WakelockPlus.enable();
+    _scheduleCurrentPhaseNotification();
   }
 
   @override
@@ -58,6 +60,7 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
     _timer?.cancel();
     _audioPlayer.dispose();
     WakelockPlus.disable();
+    NotificationService.instance.cancelPhaseNotification();
     super.dispose();
   }
 
@@ -65,12 +68,44 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
     _timer = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
   }
 
+  /// Планирует уведомление на конец текущей фазы.
+  void _scheduleCurrentPhaseNotification() {
+    if (_phase == _Phase.done || _isPaused || _isExtraPause) return;
+    String title;
+    String body;
+    switch (_phase) {
+      case _Phase.prep:
+        title = 'Работа';
+        body = 'Подготовка окончена — начинай!';
+        break;
+      case _Phase.work:
+        title = 'Круг завершён';
+        body = 'Открой приложение, чтобы оценить круг';
+        break;
+      case _Phase.rest:
+        title = 'Работа';
+        body = 'Отдых окончен — круг ${_currentCircuit + 1}';
+        break;
+      case _Phase.done:
+        return;
+    }
+    NotificationService.instance.schedulePhaseNotification(
+      title: title,
+      body: body,
+      seconds: _secondsLeft,
+    );
+  }
+
+  void _cancelPhaseNotification() {
+    NotificationService.instance.cancelPhaseNotification();
+  }
+
   Future<void> _playSound(String fileName) async {
     try {
       await _audioPlayer.stop();
       await _audioPlayer.play(AssetSource('sounds/$fileName'));
     } catch (_) {
-      // если файл ещё не добавлен — просто не будет звука, приложение не упадёт
+      // если файл ещё не добавлен — просто не будет звука
     }
   }
 
@@ -87,7 +122,7 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
     if (_isPaused) return;
     if (_secondsLeft > 1) {
       setState(() => _secondsLeft--);
-      if (_secondsLeft <= 5 && _secondsLeft >= 2) {
+      if (_secondsLeft <= 5 && _secondsLeft >= 1) {
         _playSound('tick.mp3');
       }
     } else if (_phase == _Phase.work) {
@@ -99,6 +134,7 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
 
   Future<void> _handleWorkComplete() async {
     setState(() => _isPaused = true);
+    _cancelPhaseNotification();
     await _audioPlayer.stop();
     final rpe = await showRpeDialog(
       context,
@@ -128,31 +164,42 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
       _secondsLeft = restDuration;
     });
     _signalTransition('phase_start.mp3');
+    _scheduleCurrentPhaseNotification();
   }
 
   void _advancePhase() {
     String? soundFile;
+    switch (_phase) {
+      case _Phase.prep:
+        soundFile = 'phase_start.mp3';
+        break;
+      case _Phase.rest:
+        soundFile = 'circuit_complete.mp3';
+        break;
+      case _Phase.work:
+      case _Phase.done:
+        break;
+    }
+    if (soundFile != null) {
+      _signalTransition(soundFile);
+    }
     setState(() {
       switch (_phase) {
         case _Phase.prep:
           _phase = _Phase.work;
           _secondsLeft = widget.workSeconds;
-          soundFile = 'phase_start.mp3';
           break;
         case _Phase.rest:
           _currentCircuit++;
           _phase = _Phase.work;
           _secondsLeft = widget.workSeconds;
-          soundFile = 'circuit_complete.mp3';
           break;
         case _Phase.work:
         case _Phase.done:
           break;
       }
     });
-    if (soundFile != null) {
-      _signalTransition(soundFile!);
-    }
+    _scheduleCurrentPhaseNotification();
   }
 
   void _togglePause() {
@@ -160,6 +207,9 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
     setState(() => _isPaused = pausing);
     if (pausing) {
       _audioPlayer.stop();
+      _cancelPhaseNotification();
+    } else {
+      _scheduleCurrentPhaseNotification();
     }
   }
 
@@ -174,6 +224,11 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
         _extraPauseSeconds = 0;
       }
     });
+    if (_isExtraPause) {
+      _cancelPhaseNotification();
+    } else {
+      _scheduleCurrentPhaseNotification();
+    }
   }
 
   Future<void> _confirmStopWorkout() async {
@@ -203,6 +258,7 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
     if (confirmed == true && mounted) {
       _timer?.cancel();
       _audioPlayer.stop();
+      _cancelPhaseNotification();
       Navigator.pop(context);
     }
   }
