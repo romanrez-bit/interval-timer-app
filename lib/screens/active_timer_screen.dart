@@ -5,10 +5,12 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import '../services/notification_service.dart';
 import '../widgets/rpe_dialog.dart';
+import 'summary_screen.dart';
 
 enum _Phase { prep, work, rest, done }
 
 class ActiveTimerScreen extends StatefulWidget {
+  final String workoutName;
   final int prepSeconds;
   final int workSeconds;
   final int restSeconds;
@@ -16,6 +18,7 @@ class ActiveTimerScreen extends StatefulWidget {
 
   const ActiveTimerScreen({
     super.key,
+    required this.workoutName,
     required this.prepSeconds,
     required this.workSeconds,
     required this.restSeconds,
@@ -38,17 +41,19 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
   int _secondsLeft = 0;
   int _currentCircuit = 1;
   bool _isPaused = false;
-  final List<double> _rpeLog = [];
+  final List<double?> _rpeLog = [];
 
   bool _isExtraPause = false;
   int _extraPauseSeconds = 0;
   int _totalExtraPauseSeconds = 0;
 
   final AudioPlayer _audioPlayer = AudioPlayer();
+  late final DateTime _startedAt;
 
   @override
   void initState() {
     super.initState();
+    _startedAt = DateTime.now();
     _secondsLeft = widget.prepSeconds;
     _startTicking();
     WakelockPlus.enable();
@@ -142,9 +147,7 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
       totalCircuits: widget.numCircuits,
     );
     if (!mounted) return;
-    if (rpe != null) {
-      _rpeLog.add(rpe);
-    }
+    _rpeLog.add(rpe);
     if (_currentCircuit >= widget.numCircuits) {
       _timer?.cancel();
       setState(() {
@@ -231,13 +234,36 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
     }
   }
 
+  void _openSummary() {
+    final elapsed = DateTime.now().difference(_startedAt).inSeconds;
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (context) => SummaryScreen(
+          workoutName: widget.workoutName,
+          startedAt: _startedAt,
+          totalDurationSeconds: elapsed,
+          totalExtraPauseSeconds: _totalExtraPauseSeconds,
+          completedCircuits: _rpeLog.length,
+          plannedCircuits: widget.numCircuits,
+          rpeLog: List<double?>.from(_rpeLog),
+          prepSeconds: widget.prepSeconds,
+          workSeconds: widget.workSeconds,
+          restSeconds: widget.restSeconds,
+        ),
+      ),
+    );
+  }
+
   Future<void> _confirmStopWorkout() async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: const Color(0xFF161616),
-        title: const Text('Закончить тренировку?',
-            style: TextStyle(color: Colors.white)),
+        title: const Text(
+          'Закончить тренировку?',
+          style: TextStyle(color: Colors.white),
+        ),
         content: const Text(
           'Текущий прогресс не сохранится.',
           style: TextStyle(color: Colors.white70),
@@ -249,8 +275,7 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child:
-            const Text('Закончить', style: TextStyle(color: Colors.red)),
+            child: const Text('Закончить', style: TextStyle(color: Colors.red)),
           ),
         ],
       ),
@@ -320,17 +345,21 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
                           ? ''
                           : 'круг $_currentCircuit / ${widget.numCircuits}',
                       style: const TextStyle(
-                          color: _muted,
-                          fontSize: 22,
-                          fontWeight: FontWeight.w500),
+                        color: _muted,
+                        fontSize: 22,
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
                     if (!isDone)
                       Positioned(
                         right: 0,
                         child: IconButton(
                           onPressed: _confirmStopWorkout,
-                          icon: const Icon(Icons.stop_circle_outlined,
-                              color: Colors.redAccent, size: 26),
+                          icon: const Icon(
+                            Icons.stop_circle_outlined,
+                            color: Colors.redAccent,
+                            size: 26,
+                          ),
                         ),
                       ),
                   ],
@@ -341,19 +370,21 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
                   Text(
                     _phaseLabel,
                     style: TextStyle(
-                        color: _phaseColor,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: 4),
+                      color: _phaseColor,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 4,
+                    ),
                   ),
                   const SizedBox(height: 12),
                   Text(
                     isDone ? '' : _timeText,
                     style: TextStyle(
-                        color: _phaseColor,
-                        fontSize: 120,
-                        fontWeight: FontWeight.w700,
-                        height: 1),
+                      color: _phaseColor,
+                      fontSize: 120,
+                      fontWeight: FontWeight.w700,
+                      height: 1,
+                    ),
                   ),
                 ],
               ),
@@ -363,75 +394,84 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
                     width: double.infinity,
                     child: isDone
                         ? ElevatedButton(
-                      onPressed: () => Navigator.pop(context),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _colorRest,
-                        padding:
-                        const EdgeInsets.symmetric(vertical: 22),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14)),
-                      ),
-                      child: const Text(
-                        'готово',
-                        style: TextStyle(
-                            color: Colors.black,
-                            fontSize: 20,
-                            fontWeight: FontWeight.w600,
-                            letterSpacing: 1),
-                      ),
-                    )
+                            onPressed: _openSummary,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: _colorRest,
+                              padding: const EdgeInsets.symmetric(vertical: 22),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                            ),
+                            child: const Text(
+                              'готово',
+                              style: TextStyle(
+                                color: Colors.black,
+                                fontSize: 20,
+                                fontWeight: FontWeight.w600,
+                                letterSpacing: 1,
+                              ),
+                            ),
+                          )
                         : _isExtraPause
                         ? ElevatedButton(
-                      onPressed: _toggleExtraPause,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _colorExtraPause,
-                        padding: const EdgeInsets.symmetric(
-                            vertical: 16),
-                        shape: RoundedRectangleBorder(
-                            borderRadius:
-                            BorderRadius.circular(14)),
-                      ),
-                      child: const Text(
-                        'продолжить',
-                        style: TextStyle(
-                            color: Colors.black,
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            letterSpacing: 1),
-                      ),
-                    )
+                            onPressed: _toggleExtraPause,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: _colorExtraPause,
+                              padding: const EdgeInsets.symmetric(vertical: 16),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                            ),
+                            child: const Text(
+                              'продолжить',
+                              style: TextStyle(
+                                color: Colors.black,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                                letterSpacing: 1,
+                              ),
+                            ),
+                          )
                         : OutlinedButton(
-                      onPressed: _togglePause,
-                      style: OutlinedButton.styleFrom(
-                        side: const BorderSide(
-                            color: Color(0xFF4A4A46), width: 1.5),
-                        padding: const EdgeInsets.symmetric(
-                            vertical: 16),
-                        shape: RoundedRectangleBorder(
-                            borderRadius:
-                            BorderRadius.circular(14)),
-                      ),
-                      child: Text(
-                        _isPaused ? 'продолжить' : 'пауза',
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 16,
-                            fontWeight: FontWeight.w500,
-                            letterSpacing: 1),
-                      ),
-                    ),
+                            onPressed: _togglePause,
+                            style: OutlinedButton.styleFrom(
+                              side: const BorderSide(
+                                color: Color(0xFF4A4A46),
+                                width: 1.5,
+                              ),
+                              padding: const EdgeInsets.symmetric(vertical: 16),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                            ),
+                            child: Text(
+                              _isPaused ? 'продолжить' : 'пауза',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w500,
+                                letterSpacing: 1,
+                              ),
+                            ),
+                          ),
                   ),
                   if (!isDone && !_isExtraPause) ...[
                     const SizedBox(height: 14),
                     TextButton.icon(
                       onPressed: _toggleExtraPause,
-                      icon: const Icon(Icons.pause_circle_outline,
-                          color: _muted, size: 18),
-                      label: const Text('доп. пауза',
-                          style: TextStyle(
-                              color: _muted,
-                              fontSize: 14,
-                              fontWeight: FontWeight.w500)),
+                      icon: const Icon(
+                        Icons.pause_circle_outline,
+                        color: _muted,
+                        size: 18,
+                      ),
+                      label: const Text(
+                        'доп. пауза',
+                        style: TextStyle(
+                          color: _muted,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
                     ),
                   ],
                 ],

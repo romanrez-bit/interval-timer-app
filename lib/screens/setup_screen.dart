@@ -4,6 +4,7 @@ import '../models/saved_timer.dart';
 import '../services/database_service.dart';
 import '../widgets/edit_template_dialog.dart';
 import 'active_timer_screen.dart';
+import 'history_screen.dart';
 
 class SetupScreen extends StatefulWidget {
   const SetupScreen({super.key});
@@ -53,6 +54,9 @@ class _SetupScreenState extends State<SetupScreen> {
       context,
       MaterialPageRoute(
         builder: (context) => ActiveTimerScreen(
+          workoutName: _nameController.text.isEmpty
+              ? 'Тренировка'
+              : _nameController.text,
           prepSeconds: int.tryParse(_prepController.text) ?? 10,
           workSeconds: int.tryParse(_workController.text) ?? 40,
           restSeconds: int.tryParse(_restController.text) ?? 20,
@@ -180,10 +184,36 @@ class _SetupScreenState extends State<SetupScreen> {
                 ),
               ),
               const SizedBox(height: 8),
-              _addTemplateCard(),
+              Row(
+                children: [
+                  Expanded(child: _addTemplateCard()),
+                  const SizedBox(width: 10),
+                  _historyButton(),
+                ],
+              ),
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _historyButton() {
+    return GestureDetector(
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => const HistoryScreen()),
+        );
+      },
+      child: Container(
+        width: 48,
+        height: 48,
+        decoration: BoxDecoration(
+          border: Border.all(color: _muted, width: 1),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: const Icon(Icons.list_alt, color: _muted, size: 20),
       ),
     );
   }
