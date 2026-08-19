@@ -5,6 +5,7 @@ import '../services/database_service.dart';
 import '../widgets/edit_template_dialog.dart';
 import 'active_timer_screen.dart';
 import 'history_screen.dart';
+import 'settings_screen.dart';
 
 class SetupScreen extends StatefulWidget {
   const SetupScreen({super.key});
@@ -189,6 +190,8 @@ class _SetupScreenState extends State<SetupScreen> {
                   Expanded(child: _addTemplateCard()),
                   const SizedBox(width: 10),
                   _historyButton(),
+                  _settingsButton(),
+                  const SizedBox(width: 10),
                 ],
               ),
             ],
@@ -198,7 +201,27 @@ class _SetupScreenState extends State<SetupScreen> {
     );
   }
 
-  Widget _historyButton() {
+Widget _settingsButton() {
+return GestureDetector(
+onTap: () {
+Navigator.push(
+context,
+MaterialPageRoute(builder: (context) => const SettingsScreen()),
+);
+},
+child: Container(
+width: 48,
+height: 48,
+decoration: BoxDecoration(
+border: Border.all(color: _muted, width: 1),
+borderRadius: BorderRadius.circular(12),
+),
+child: const Icon(Icons.settings_outlined, color: _muted, size: 20),
+),
+);
+}
+
+Widget _historyButton() {
     return GestureDetector(
       onTap: () {
         Navigator.push(

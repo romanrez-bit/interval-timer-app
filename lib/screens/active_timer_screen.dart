@@ -4,6 +4,8 @@ import 'package:flutter/services.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import '../services/notification_service.dart';
+import '../services/rest_recommendation_service.dart';
+import '../services/settings_service.dart';
 import '../widgets/rpe_dialog.dart';
 import 'summary_screen.dart';
 
@@ -29,7 +31,8 @@ class ActiveTimerScreen extends StatefulWidget {
   State<ActiveTimerScreen> createState() => _ActiveTimerScreenState();
 }
 
-class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
+class _ActiveTimerScreenState extends State<ActiveTimerScreen>
+    with WidgetsBindingObserver {
   static const _colorPrep = Color(0xFFD4A017);
   static const _colorWork = Color(0xFFE3620F);
   static const _colorRest = Color(0xFF4ADE80);
@@ -50,18 +53,66 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
   final AudioPlayer _audioPlayer = AudioPlayer();
   late final DateTime _startedAt;
 
+  int? _recommendedRest;
+  double? _lastRpe;
+
+  bool _isAppInBackground = false;
+  DateTime? _backgroundedAt;
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    final inBackground = state != AppLifecycleState.resumed;
+    if (inBackground && !_isAppInBackground) {
+      _isAppInBackground = true;
+      _backgroundedAt = DateTime.now();
+      _scheduleCurrentPhaseNotification();
+    } else if (!inBackground && _isAppInBackground) {
+      _isAppInBackground = false;
+      _catchUpAfterBackground();
+      // даём время прочитать уведомление, потом убираем
+      Future.delayed(const Duration(seconds: 4), () {
+        if (mounted && !_isAppInBackground) {
+          _cancelPhaseNotification();
+        }
+      });
+    }
+  }
+
+  /// Пока приложение свёрнуто, Android останавливает отсчёт.
+  /// При возвращении догоняем реально прошедшее время.
+  void _catchUpAfterBackground() {
+    final wentAway = _backgroundedAt;
+    _backgroundedAt = null;
+    if (wentAway == null) return;
+    final elapsed = DateTime.now().difference(wentAway).inSeconds;
+    if (elapsed <= 0) return;
+
+    if (_isExtraPause) {
+      setState(() => _extraPauseSeconds += elapsed);
+      return;
+    }
+    if (_isPaused || _phase == _Phase.done) return;
+
+    setState(() {
+      _secondsLeft = (_secondsLeft - elapsed).clamp(1, _secondsLeft);
+    });
+  }
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    NotificationService.instance.cancelAll();
     _startedAt = DateTime.now();
     _secondsLeft = widget.prepSeconds;
     _startTicking();
     WakelockPlus.enable();
-    _scheduleCurrentPhaseNotification();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     _audioPlayer.dispose();
     WakelockPlus.disable();
@@ -75,6 +126,8 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
 
   /// Планирует уведомление на конец текущей фазы.
   void _scheduleCurrentPhaseNotification() {
+    if (!SettingsService.instance.notificationsEnabled) return;
+    if (!_isAppInBackground) return;
     if (_phase == _Phase.done || _isPaused || _isExtraPause) return;
     String title;
     String body;
@@ -106,6 +159,7 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
   }
 
   Future<void> _playSound(String fileName) async {
+    if (!SettingsService.instance.soundEnabled) return;
     try {
       await _audioPlayer.stop();
       await _audioPlayer.play(AssetSource('sounds/$fileName'));
@@ -116,7 +170,9 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
 
   void _signalTransition(String soundFile) {
     _playSound(soundFile);
-    HapticFeedback.mediumImpact();
+    if (SettingsService.instance.vibrationEnabled) {
+      HapticFeedback.mediumImpact();
+    }
   }
 
   void _tick() {
@@ -140,7 +196,9 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
   Future<void> _handleWorkComplete() async {
     setState(() => _isPaused = true);
     _cancelPhaseNotification();
-    await _audioPlayer.stop();
+    _signalTransition('circuit_complete.mp3');
+    await Future.delayed(const Duration(milliseconds: 600));
+    if (!mounted) return;
     final rpe = await showRpeDialog(
       context,
       circuitNumber: _currentCircuit,
@@ -165,8 +223,35 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
       _isPaused = false;
       _phase = _Phase.rest;
       _secondsLeft = restDuration;
+      _lastRpe = rpe;
+      _recommendedRest = null;
     });
     _signalTransition('phase_start.mp3');
+    _scheduleCurrentPhaseNotification();
+    _loadRecommendation(rpe, restDuration);
+  }
+
+  Future<void> _loadRecommendation(double? rpe, int baseRest) async {
+    final recommended =
+    await RestRecommendationService.instance.recommendRest(
+      rpe: rpe,
+      workSeconds: widget.workSeconds,
+      restSeconds: widget.restSeconds,
+      circuitNumber: _currentCircuit,
+    );
+    if (!mounted || _phase != _Phase.rest) return;
+    setState(() => _recommendedRest = recommended);
+  }
+
+  void _acceptRecommendation() {
+    final recommended = _recommendedRest;
+    if (recommended == null) return;
+    final elapsed = widget.restSeconds - _secondsLeft;
+    final newLeft = (recommended - elapsed).clamp(1, recommended);
+    setState(() {
+      _secondsLeft = newLeft;
+      _recommendedRest = null;
+    });
     _scheduleCurrentPhaseNotification();
   }
 
@@ -177,7 +262,7 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
         soundFile = 'phase_start.mp3';
         break;
       case _Phase.rest:
-        soundFile = 'circuit_complete.mp3';
+        soundFile = 'phase_start.mp3';
         break;
       case _Phase.work:
       case _Phase.done:
@@ -390,6 +475,12 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
               ),
               Column(
                 children: [
+                  if (_phase == _Phase.rest &&
+                      !_isExtraPause &&
+                      _recommendedRest != null) ...[
+                    _recommendationCard(),
+                    const SizedBox(height: 12),
+                  ],
                   SizedBox(
                     width: double.infinity,
                     child: isDone
@@ -482,4 +573,56 @@ class _ActiveTimerScreenState extends State<ActiveTimerScreen> {
       ),
     );
   }
+
+  Widget _recommendationCard() {
+    final rpeText = _lastRpe == null
+        ? ''
+        : 'RPE ${_lastRpe == _lastRpe!.roundToDouble() ? _lastRpe!.toInt() : _lastRpe} · ';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0F2418),
+        border: Border.all(color: const Color(0xFF2A5A3A)),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('${rpeText}рекомендуем',
+                    style: const TextStyle(
+                        color: Color(0xFFA8B8AC), fontSize: 13)),
+                const SizedBox(height: 2),
+                Text('$_recommendedRest сек',
+                    style: const TextStyle(
+                        color: _colorRest,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600)),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          ElevatedButton(
+            onPressed: _acceptRecommendation,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _colorRest,
+              padding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
+            ),
+            child: const Text('продлить',
+                style: TextStyle(
+                    color: Color(0xFF00220D),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
+  }
 }
+
